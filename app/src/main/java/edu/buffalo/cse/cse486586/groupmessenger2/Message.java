@@ -9,7 +9,6 @@ public class Message   {
 
     /*
     Types of messages
-
     1) Multicast message to each process
     2) Proposed message (Maintain a proposed queue)
     3) Each process replies with a proposed sequence number

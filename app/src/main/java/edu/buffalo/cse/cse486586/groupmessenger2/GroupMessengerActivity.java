@@ -37,10 +37,12 @@ import java.util.PriorityQueue;
 import java.util.Random;
 import java.util.ArrayList;
 import java.util.LinkedList;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.PriorityBlockingQueue;
 
 /**
  * GroupMessengerActivity is the main Activity for the assignment.
- * 
+ *
  * @author stevko
  *
  */
@@ -54,9 +56,11 @@ public class GroupMessengerActivity extends Activity {
     static final int SERVER_PORT = 10000;
     static int SEQUENCE_NUMBER = 0;
 
-    public static PriorityQueue<Message> queue = new PriorityQueue<Message>(10, new customComparator());
+    public static PriorityBlockingQueue<Message> queue = new PriorityBlockingQueue<Message>(10, new customComparator());
     public static int maximumProposedNumber = 0;
     public static int maximumAggreedSequenceNum = 0;
+    private static  String failedAVD = "";
+
     public static int num = 0;
     public static final String MULTICAST_MESSAGE = "MULTICAST";
     public static final String SEQUENCE_MESSAGE = "SEQUENCE";
@@ -64,6 +68,7 @@ public class GroupMessengerActivity extends Activity {
 
     private static final String KEY_FIELD = "key";
     private static final String VALUE_FIELD = "value";
+
 
     private ContentResolver mContentResolver;
     private Uri mUri;
@@ -77,11 +82,6 @@ public class GroupMessengerActivity extends Activity {
         mContentResolver = getContentResolver();
         mUri = buildUri("content", "edu.buffalo.cse.cse486586.groupmessenger2.provider");
 
-        /*
-         * Calculate the port number that this AVD listens on.
-         * It is just a hack that I came up with to get around the networking limitations of AVDs.
-         * The explanation is provided in the PA1 spec.
-         */
         TelephonyManager tel = (TelephonyManager) this.getSystemService(Context.TELEPHONY_SERVICE);
         String portStr = tel.getLine1Number().substring(tel.getLine1Number().length() - 4);
         final String myPort = String.valueOf((Integer.parseInt(portStr) * 2));
@@ -141,9 +141,9 @@ public class GroupMessengerActivity extends Activity {
                 // Code here executes on main thread after user presses button
                 String msg = editText.getText().toString() + "\n";
                 editText.setText(""); // This is one way to reset the input box.
-                TextView localTextView = (TextView) findViewById(R.id.textView1);
-                localTextView.append("\t" + msg); // This is one way to display a string.
-
+//                TextView localTextView = (TextView) findViewById(R.id.textView1);
+//                localTextView.append("\t" + msg); // This is one way to display a string.
+                Log.i("TYPED_MESSAGE", msg);
                 new ClientTask().executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, msg, myPort);
             }
         });
@@ -184,10 +184,11 @@ public class GroupMessengerActivity extends Activity {
              * to onProgressUpdate().
              */
             Socket socket = null;
-            DataInputStream dis;
-            DataOutputStream dos;
-            try {
+            DataInputStream dis = null;
+            DataOutputStream dos = null;
+
                 while(true) {
+                    try {
                     socket = serverSocket.accept();
                     InputStream stream = socket.getInputStream();
 
@@ -205,107 +206,153 @@ public class GroupMessengerActivity extends Activity {
 
                     String messageType = splittedMessage[0].split(":")[1];
 
-                    if(messageType.equals(MULTICAST_MESSAGE)) {
-                        //queue.add()
-                        //System.out.println("Message Length::" + splittedMessage.length);
-                        String sender = splittedMessage[1].split(":")[1];
-                        //System.out.println("sender::" + sender);
-                        String actualMessage = splittedMessage[2].split(":")[1];
-                        //System.out.println("actualMessage::" + actualMessage);
-                        String receiver = splittedMessage[3].split(":")[1];
-                        //System.out.println("receiver::" + receiver);
-                        String messageId = splittedMessage[4].split(":")[1];
-                        //System.out.println("messageId::" + messageId);
+                        if (messageType.equals(MULTICAST_MESSAGE)) {
 
-                        int proposedNumber = Math.max(maximumProposedNumber, maximumAggreedSequenceNum) + 1;
-                        maximumProposedNumber = proposedNumber;
+                            String sender = splittedMessage[1].split(":")[1];
 
-                        Message storeMessage = new Message(MULTICAST_MESSAGE, actualMessage, sender, receiver, false, messageId, maximumProposedNumber);
+                            String actualMessage = splittedMessage[2].split(":")[1];
 
-                        Log.i("MESSAGE_CONTENT", messageId);
-                        queue.add(storeMessage);
+                            String receiver = splittedMessage[3].split(":")[1];
 
-                        // Now send the proposed number back to the sender process
-
-                        //String type, String actualMessage, String senderId, String receiverId, int proposed
-                        Message proposedMessage = new Message("PROPOSED", actualMessage, sender, receiver, maximumProposedNumber);
-                        Log.i("ProposedNumber", "ProposedNumber for message " + proposedNumber +"  " + actualMessage);
-                        OutputStream outputStream = socket.getOutputStream();
-                        dos = new DataOutputStream(outputStream);
-                        dos.writeUTF(proposedMessage.getString());
-//                        outputStream.write(String.valueOf(proposedNumber).getBytes());
-//                        outputStream.close();
-                        System.out.println("MULTICAST Message Detected");
-
-                    }
-                    else if(messageType.equals(SEQUENCE_MESSAGE)) {
-
-                        System.out.println("Message Length::" + splittedMessage.length);
-                        String messageId = splittedMessage[5].split(":")[1];
-                        String sequenceNumber = splittedMessage[4].split(":")[1];
-                        String sender = splittedMessage[1].split(":")[1];
-                        maximumAggreedSequenceNum = Math.max(maximumAggreedSequenceNum, Integer.valueOf(sequenceNumber));
-                        Message msg = getTheMessage(messageId, sender);
-                        Log.i("GOT_SEQUENCE1", splittedMessage[2].split(":")[1] +"   " + sequenceNumber + " :: " + msg.isDeliverable);
-                        msg.isDeliverable = true;
-                        msg.sequenceNumber = Integer.valueOf(sequenceNumber);
-                        queue.add(msg);
-                        Log.i("GOT_SEQUENCE2", splittedMessage[2].split(":")[1] +"   " + sequenceNumber + " :: " + msg.isDeliverable);
-                        showQueueStatus();
-                        deliverMessages();
-                    }
-                    else if(messageType.equals(FAILED_MESSAGE)) {
-
-                        String failedPort = splittedMessage[1].split(":")[1];
-                        Log.i("Failed_PORT", failedPort);
-                        removeMessageFromFailedPort(failedPort);
-                    }
+                            String messageId = splittedMessage[4].split(":")[1];
 
 
-                    //this.publishProgress(messageReceived);
-                    socket.close();
-                    inputStream.close();
-                    dis.close();
+                            int proposedNumber = Math.max(maximumProposedNumber, maximumAggreedSequenceNum) + 1;
+                            maximumProposedNumber = proposedNumber;
+
+                            Message storeMessage = new Message(MULTICAST_MESSAGE, actualMessage, sender, receiver, false, messageId, maximumProposedNumber);
+
+                            Log.i("MESSAGE_CONTENT", messageId);
+                            queue.add(storeMessage);
+
+
+                            // Now send the proposed number back to the sender process
+
+
+                            Message proposedMessage = new Message("PROPOSED", actualMessage, sender, receiver, maximumProposedNumber);
+                            Log.i("ProposedNumber", "ProposedNumber for message " + proposedNumber + "  " + actualMessage);
+
+
+                            OutputStream outputStream = socket.getOutputStream();
+                            dos = new DataOutputStream(outputStream);
+                            dos.writeUTF(proposedMessage.getString());
+
+                            System.out.println("MULTICAST Message Detected");
+
+                        } else if (messageType.equals(SEQUENCE_MESSAGE)) {
+
+                            //removeMessageFromFailedPort();
+
+                            System.out.println("Message Length::" + splittedMessage.length);
+                            String messageId = splittedMessage[5].split(":")[1];
+                            String sequenceNumber = splittedMessage[4].split(":")[1];
+                            String sender = splittedMessage[1].split(":")[1];
+                            maximumAggreedSequenceNum = Math.max(maximumAggreedSequenceNum, Integer.valueOf(sequenceNumber));
+                            Message msg = getTheMessage(messageId, sender, splittedMessage[2].split(":")[1]);
+                            Log.i("GOT_SEQUENCE1", splittedMessage[2].split(":")[1] + "   " + sequenceNumber + " :: " + msg.isDeliverable);
+                            msg.isDeliverable = true;
+                            msg.sequenceNumber = Integer.valueOf(sequenceNumber);
+                            queue.offer(msg);
+                            Log.i("GOT_SEQUENCE2", splittedMessage[2].split(":")[1] + "   " + sequenceNumber + " :: " + msg.isDeliverable);
+                            showQueueStatus();
+
+                            synchronized(queue) {
+                                ArrayList<Message> temp = new ArrayList<Message>();
+                                Log.i("Before_Clear_Queue", String.valueOf(queue.size()));
+                                for (Message messageToRemove : queue) {
+                                    Log.i("DELEING_FAILED_FROM", messageToRemove.sender + "   " + failedAVD);
+                                    if (!messageToRemove.sender.equals(failedAVD)) {
+                                        temp.add(messageToRemove);
+                                    }
+                                }
+
+                                queue.clear();
+                                for (Message msg1 : temp) {
+                                    queue.offer(msg1);
+                                }
+                                Log.i("After_Build_Queue", String.valueOf(queue.size()));
+
+                            }
+
+                            deliverMessages();
+
+                        } else if (messageType.equals(FAILED_MESSAGE)) {
+
+                            String failedPort = splittedMessage[1].split(":")[1];
+                            Log.i("Failed_PORT", failedPort);
+                            deliverMessages();
+                        }
 
                 }
+                    catch(IOException e){
+                        Log.i("Server_Failed", "YE");
+                        Log.e(TAG, "Client Disconnected");
+                    }
+                    catch (Exception e) {
+                        e.printStackTrace();
+                        Log.e(TAG, "Failed to accept connection");
+                    }finally {
+                        try{
+                            if(socket != null)
+                                socket.close();
+                        }
+                        catch (IOException e){
+                            Log.e(TAG, "Error while disconnecting socket");
+                        }
+                    }
             }
-            catch(IOException e){
-                Log.e(TAG, "Client Disconnected");
-            }
-            catch (Exception e) {
-                Log.e(TAG, "Failed to accept connection");
-            }finally {
-                try{
-                    if(socket != null)
-                        socket.close();
-                }
-                catch (IOException e){
-                    Log.e(TAG, "Error while disconnecting socket");
-                }
-            }
-            return null;
+
         }
 
-        private void removeMessageFromFailedPort(String failedPort) {
-            for(Message msg : queue) {
-                Log.i("REMOVE_MESSAGE", msg.sender);
-                if(msg.sender.equals(failedPort)) {
-                    queue.remove(msg);
+        private void removeMessageFromFailedPort() {
+
+                for (Message msg : queue) {
+                    Log.i("DELEING_FAILED_FROM", msg.sender+"   " + failedAVD);
+                    if (msg.sender.equals(failedAVD)) {
+                        Log.i("REMOVE_MESSAGE", msg.message+"   " +msg.sender);
+                        queue.remove(msg);
+                    }
                 }
+        }
+
+
+        private void removeMessageFromFailedPort1(){
+            synchronized(queue) {
+                ArrayList<Message> temp = new ArrayList<Message>();
+                Log.i("Before_Clear_Queue", String.valueOf(queue.size()));
+                for (Message messageToRemove : queue) {
+                    Log.i("DELEING_FAILED_FROM", messageToRemove.sender + "   " + failedAVD);
+                    if (!messageToRemove.sender.equals(failedAVD)) {
+                        temp.add(messageToRemove);
+                    }
+                }
+
+                queue.clear();
+                for (Message msg1 : temp) {
+                    queue.offer(msg1);
+                }
+                Log.i("After_Build_Queue", String.valueOf(queue.size()));
+                // Alternate End
             }
         }
 
         private void deliverMessages() {
             ContentValues cv = new ContentValues();
-            while(queue.size()>0 && queue.peek().isDeliverable) {
-                Message msg = queue.poll();
-                //Log.i("DELIVERED")
-                cv.put(KEY_FIELD, String.valueOf(num));
-                cv.put(VALUE_FIELD, msg.message);
-                mContentResolver.insert(mUri, cv);
-                this.publishProgress(msg.message);
-                Log.i("DELIVERED", msg.message+"  seqNo: " + String.valueOf(msg.sequenceNumber));
-                num++;
+            synchronized(queue) {
+                while (!queue.isEmpty()) {
+                    if (queue.peek().isDeliverable) {
+                        Message msg = queue.poll();
+                        String helper = "";
+                        if (queue.peek() != null) {
+                            helper = queue.peek().isDeliverable + "  " + queue.peek().message;
+                        }
+                        Log.i("DELIVERED", msg.message + "  seqNo: " + String.valueOf(msg.sequenceNumber) + "   size::" + queue.size() + "  " + helper);
+                        this.publishProgress(msg.message);
+                    } else {
+                        break;
+                    }
+
+                }
             }
         }
 
@@ -313,15 +360,17 @@ public class GroupMessengerActivity extends Activity {
             StringBuilder sb = new StringBuilder();
             Iterator<Message> itr = queue.iterator();
             while(itr.hasNext()) {
+                sb = new StringBuilder();
                 Message temp = itr.next();
                 sb.append(temp.message+"   " + temp.isDeliverable +"   "+ temp.sender +"\n");
             }
             Log.i("QUEUE_STATUS", sb.toString());
         }
 
-        private Message getTheMessage(String msgId, String sender) {
+        private Message getTheMessage(String msgId, String sender, String actualMessage) {
             for(Message msg : queue) {
-                if(msg.messageID.equals(msgId) && msg.sender.equals(sender)) {
+                //if(msg.messageID.equals(msgId) && msg.sender.equals(sender) && msg.message.equals(actualMessage)) {
+                if(msg.messageID.equals(msgId) && msg.sender.equals(sender) && msg.message.equals(actualMessage)) {
                     queue.remove(msg);
                     return msg;
                 }
@@ -331,12 +380,11 @@ public class GroupMessengerActivity extends Activity {
         }
 
         protected void onProgressUpdate(String...strings) {
-            /*
-             * The following code displays what is received in doInBackground().
-             */
+
             String strReceived = strings[0].trim();
             TextView localTextView = (TextView) findViewById(R.id.textView1);
-            localTextView.append(strReceived);
+            TextView remoteTextView = (TextView) findViewById(R.id.textView1);
+            remoteTextView.append(SEQUENCE_NUMBER+" "+strReceived);
             localTextView.append("\n");
 
             /*
@@ -347,6 +395,7 @@ public class GroupMessengerActivity extends Activity {
             cv.put(KEY_FIELD, String.valueOf(SEQUENCE_NUMBER++));
             cv.put(VALUE_FIELD, strReceived);
             mContentResolver.insert(mUri, cv);
+            Log.i("CONTENTRESOLVER_ADD", String.valueOf(SEQUENCE_NUMBER-1)+"  "+strReceived);
 
             String filename = "SimpleMessengerOutput";
             String string = strReceived + "\n";
@@ -391,72 +440,84 @@ public class GroupMessengerActivity extends Activity {
             DataInputStream dis = null;
             String messageId = String.valueOf(random.getRandomNumber());
             String remote = null;
-            try {
+
+
+            Log.i("SEND_MULTICAST", msgToSend+"  From Port::" + senderPort);
+
+
                 for(String PORT : REMOTE_PORTS) {
-                    remote = PORT;
-                    socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
-                            Integer.parseInt(PORT));
-                    stream = socket.getOutputStream();
-
-                    // From here send the MULTICAST message
-
-                    Message message = new Message(MULTICAST_MESSAGE, msgToSend, senderPort, PORT, messageId);
-                    String stringMessage = message.getString();
-                    OutputStreamWriter out = new OutputStreamWriter(stream,
-                            "UTF-8");
-
-                    dos = new DataOutputStream(stream);
-                    dos.writeUTF(stringMessage);
-
-                    stream.flush();
-                    out.flush();
-
-
                     try {
-                        dis = new DataInputStream(socket.getInputStream());
-
-                        String proposedMessageReceived = dis.readUTF();
-                        Message proposedMessage = getProposedMessage(proposedMessageReceived);
-
-                    /*
-                            While adding to the arraylist make sure that the proposed
-                            number is generated for the message you sent and it was from the sender process
-                     */
-                        if (proposedMessage.sender.equals(senderPort) && proposedMessage.message.equals(msgToSend)) {
-                            proposedNumbers.add(proposedMessage);
+                        if(failedAVD.equals(PORT)){
+                            Log.v("NOT_SENDING_MULTICAST", failedAVD);
+                            continue;
                         }
-                    }
-                    catch (SocketTimeoutException te) {
-                        Log.e("Socket_Timeout_Exce", PORT);
-                        sendFailedPortMessage(remote);
-                    }
-                    catch (IOException exp) {
-                        Log.e("CLIENT_FAILED_EXCEPTION", PORT);
-                        sendFailedPortMessage(remote);
+                        remote = PORT;
+                        socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
+                                Integer.parseInt(PORT));
+                        socket.setSoTimeout(3000);
+                        stream = socket.getOutputStream();
+
+                        // From here send the MULTICAST message
+
+                        Message message = new Message(MULTICAST_MESSAGE, msgToSend, senderPort, PORT, messageId);
+                        String stringMessage = message.getString();
+                        Log.i("SEND_GETSTRING", stringMessage);
+                        OutputStreamWriter out = new OutputStreamWriter(stream,
+                                "UTF-8");
+
+                        dos = new DataOutputStream(stream);
+                        dos.writeUTF(stringMessage);
+
+                        stream.flush();
+                        out.flush();
+
+
+                        try {
+                            dis = new DataInputStream(socket.getInputStream());
+
+                            String proposedMessageReceived = dis.readUTF();
+                            Message proposedMessage = getProposedMessage(proposedMessageReceived);
+
+                        /*
+                                While adding to the arraylist make sure that the proposed
+                                number is generated for the message you sent and it was from the sender process
+                         */
+                            if (proposedMessage.sender.equals(senderPort) && proposedMessage.message.equals(msgToSend)) {
+                                proposedNumbers.add(proposedMessage);
+                            }
+                        }
+                        catch (Exception e) {
+                            failedAVD = remote;
+                            socket.close();
+                            Log.e("ACCEPT_PROPOSED_NO", "Exception while accepting Proposed Number");
+                        }
+
                     }
                     catch (Exception e) {
+                        failedAVD = remote;
+                        try {
+                            socket.close();
+                        } catch (IOException e1) {
+                            e1.printStackTrace();
+                        }
                         Log.e("ACCEPT_PROPOSED_NO", "Exception while accepting Proposed Number");
                     }
-                }
-            }
-            catch (UnknownHostException e) {
-                Log.e(TAG, "ClientTask UnknownHostException");
-            } catch (IOException e) {
-                Log.e(TAG, "ClientTask socket IOException", e.fillInStackTrace());
-            }
-            finally {
-                try{
-                    socket.close();
-                    stream.close();
-                    dis.close();
-                    dos.close();
-                    socket.close();
-                    stream.close();
+                        finally {
+                        try{
+                            if(stream != null)
+                            stream.close();
+                            if(dis != null)
+                            dis.close();
+                            if(dos!=null)
+                            dos.close();
+                            if(socket != null)
+                            socket.close();
 
-                }
-                catch (IOException e){
-                    Log.e(TAG, "Error while disconnecting socket");
-                }
+                        }
+                        catch (IOException e){
+                            Log.e(TAG, "Error while disconnecting socket");
+                        }
+                    }
             }
 
 
@@ -468,95 +529,56 @@ public class GroupMessengerActivity extends Activity {
 
             // **************************************************** Remaining
             String clientPort = null;
-            try {
+
                 for(String PORT : REMOTE_PORTS) {
-                    clientPort = PORT;
-                    socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
-                            Integer.parseInt(PORT));
-                    stream = socket.getOutputStream();
+                    try {
+                        if(failedAVD.equals(PORT)){
+                            Log.v("NOT_SENDING_SEQUENCE", msgToSend+"  " + failedAVD);
+                            continue;
+                        }
+                        Log.i("SENDING_SEQUENCE_TO", msgToSend +"  "+ PORT);
+                        clientPort = PORT;
+                        socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
+                                Integer.parseInt(PORT));
+                        socket.setSoTimeout(1000);
+                        stream = socket.getOutputStream();
 
-                    // From here send the MULTICAST message
+                        // From here send the MULTICAST message
 
-                    Message message = new Message(SEQUENCE_MESSAGE, msgToSend, senderPort, PORT, maxProposedNumber, messageId);
-                    String stringMessage = message.getString();
-                    OutputStreamWriter out = new OutputStreamWriter(stream,
-                            "UTF-8");
+                        Message message = new Message(SEQUENCE_MESSAGE, msgToSend, senderPort, PORT, maxProposedNumber, messageId);
+                        String stringMessage = message.getString();
+                        OutputStreamWriter out = new OutputStreamWriter(stream,
+                                "UTF-8");
 
-                    dos = new DataOutputStream(stream);
-                    dos.writeUTF(stringMessage);
-                    //out.write(stringMessage, 0, stringMessage.length());
-                    //stream.write(stringMessage.getBytes("UTF-8"));
-                    stream.flush();
-                    out.flush();
-                }
-                //Thread.sleep(500);
+                        dos = new DataOutputStream(stream);
+                        dos.writeUTF(stringMessage);
+
+                        stream.flush();
+                        out.flush();
+
+                    }
+                    catch (Exception e) {
+                        failedAVD = clientPort;
+                        try {
+                            socket.close();
+                        } catch (IOException e1) {
+                            e1.printStackTrace();
+                        }
+                    }
+                    finally {
+                        try{
+                            socket.close();
+                            stream.close();
+                            socket.close();
+                        }
+                        catch (IOException e){
+                            Log.e(TAG, "Error while disconnecting socket");
+                        }
+                    }
             }
-            catch (SocketTimeoutException te) {
-                Log.e("Socket_Timeout_Exce", clientPort);
-                sendFailedPortMessage(clientPort);
-            }
-            catch (UnknownHostException e) {
-                Log.e(TAG, "ClientTask UnknownHostException");
-                sendFailedPortMessage(clientPort);
-            }
-            catch (IOException exp) {
-                Log.e("CLIENT_FAILED_EXCEPTION", clientPort);
-                sendFailedPortMessage(clientPort);
-            }
-             finally {
-                try{
-                    socket.close();
-                    stream.close();
-                    socket.close();
-                }
-                catch (IOException e){
-                    Log.e(TAG, "Error while disconnecting socket");
-                }
-            }
+
 
             return null;
-        }
-    }
-
-    public static void sendFailedPortMessage(String remote) {
-        Socket socket = null;
-        OutputStream stream = null;
-        try {
-
-            DataOutputStream dos = null;
-
-            String[] newPorts = new String[REMOTE_PORTS.length-1];
-            int itr=0;
-            for(int i=0; i<REMOTE_PORTS.length;i++) {
-                if(!REMOTE_PORTS[i].equals(remote)) {
-                    newPorts[itr++] = REMOTE_PORTS[i];
-                }
-            }
-
-            // REMOTE_PORTS = newPorts;
-            Log.i("New_Length_of_REMOTE", String.valueOf(REMOTE_PORTS.length));
-
-            for(String PORT1 : newPorts) {
-                socket = new Socket(InetAddress.getByAddress(new byte[]{10, 0, 2, 2}),
-                        Integer.parseInt(PORT1));
-                stream = socket.getOutputStream();
-                Message message1 = new Message(FAILED_MESSAGE, remote);
-                String stringMessage1 = message1.getString();
-                OutputStreamWriter out1 = new OutputStreamWriter(stream,
-                        "UTF-8");
-
-                dos = new DataOutputStream(stream);
-                dos.writeUTF(stringMessage1);
-
-                stream.flush();
-                out1.flush();
-                socket.close();
-                dos.close();
-                stream.close();
-            }
-        }
-        catch (IOException e) {
-            e.printStackTrace();
         }
     }
 
@@ -584,6 +606,7 @@ public class GroupMessengerActivity extends Activity {
 
 
     public static int getMaxProposedNumber (ArrayList<Message> set) {
+        Log.i("SIZE_OF_PROPOSED", String.valueOf(set.size()));
         int max = Integer.MIN_VALUE;
         for(Message msg : set) {
             //Log.i("SET_VALUE", String.valueOf(num));
